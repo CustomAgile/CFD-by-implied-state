@@ -2,8 +2,11 @@
     "sdk": "2.1",
     "className": "TSCFDByImpliedState",
     "javascript": [
-        "node_modules/@agile-central-technical-services/utils-ancestor-pi-app-filter/index.js",
+        "node_modules/@customagile/ancestor-pi-multi-level-pi-app-filter/index.js",
         "src/javascript/utils/*.js",
         "src/javascript/*.js"
+    ],
+    "css": [
+        "node_modules/@customagile/ancestor-pi-multi-level-pi-app-filter/index.css"
     ]
 }

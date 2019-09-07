@@ -9,3 +9,4 @@ deploy/app.min.js
 .settings
 deploy/
 -deploy/Ugly.txt
+.DS_Store
