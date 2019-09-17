@@ -139,7 +139,7 @@ Ext.define("TSCFDByImpliedState", {
 
         if (this.ancestorFilterPlugin._hasFilters()) {
             var multiLevelFilters = await this.ancestorFilterPlugin.getAllFiltersForType(type_path, true).catch((e) => {
-                this._showErrorNotification(e.message || e);
+                Rally.ui.notify.Notifier.showError({ message: (e.message || e) });
                 me.loadingFailed = true;
                 this.setLoading(false);
             });
