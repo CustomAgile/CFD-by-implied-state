@@ -88,10 +88,11 @@ Ext.define("TSCFDByImpliedState", {
             return;
         }
         me.loadingChart = true;
+        me.loadingFailed = false;
         var container = this.down('#display_box');
         container.removeAll();
 
-        this.setLoading("Gathering Data...");
+        this.setLoading("Loading Filters...");
 
         var project = this.getContext().getProject().ObjectID;
         var type_path = this.getSetting('type_path');
@@ -137,11 +138,20 @@ Ext.define("TSCFDByImpliedState", {
         }
 
         if (this.ancestorFilterPlugin._hasFilters()) {
-            var multiLevelFilters = await this.ancestorFilterPlugin.getAllFiltersForType(type_path, true);
+            var multiLevelFilters = await this.ancestorFilterPlugin.getAllFiltersForType(type_path, true).catch((e) => {
+                this._showErrorNotification(e.message || e);
+                me.loadingFailed = true;
+                this.setLoading(false);
+            });
+
+            if (me.loadingFailed) { return; }
+
             var dataContext = this.getContext().getDataContext();
             if (this.searchAllProjects()) {
                 dataContext.project = null;
             }
+
+            this.setLoading("Gathering Data...");
 
             try {
                 var records = await Ext.create('Rally.data.wsapi.Store', {
@@ -150,7 +160,8 @@ Ext.define("TSCFDByImpliedState", {
                     context: dataContext,
                     limit: Infinity,
                     fetch: ['ObjectID'],
-                    filters: multiLevelFilters
+                    filters: multiLevelFilters,
+                    enablePostGet: true
                 }).load();
 
                 var ids = [0];
@@ -202,6 +213,7 @@ Ext.define("TSCFDByImpliedState", {
                 compress: true,
                 fetch: [value_field, 'ActualStartDate', 'ActualEndDate', '_UnformattedID', 'Milestones'],
                 removeUnauthorizedSnapshots: true,
+                enablePostGet: true,
                 listeners: {
                     load: function () {
                         me.setLoading(false);
