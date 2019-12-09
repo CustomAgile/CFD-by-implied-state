@@ -226,10 +226,7 @@ Ext.define("TSCFDByImpliedState", {
                 chart: {
                     zoomType: 'xy',
                     events: {
-                        redraw: function () {
-                            //                            me.logger.log('howdy');
-                            //                            me._preProcess();
-                        }
+                        redraw: function () { }
                     }
                 },
                 title: {
@@ -273,15 +270,6 @@ Ext.define("TSCFDByImpliedState", {
     isExternal: function () {
         return typeof (this.getAppId()) == 'undefined';
     },
-
-    /*
-    //onSettingsUpdate:  Override
-    onSettingsUpdate: function (settings){
-        this.logger.log('onSettingsUpdate',settings);
-        // Ext.apply(this, settings);
-        this.launch();
-    },
-    */
 
     _addCountToChoices: function (store) {
         store.add({ name: 'Count', value: 'Count', fieldDefinition: {} });
