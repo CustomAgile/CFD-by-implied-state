@@ -47,7 +47,7 @@ Ext.define("TSCFDByImpliedState", {
             // Set to false to prevent the '-- None --' selection option if your app can't support
             // querying by a null ancestor (e.g. Lookback _ItemHierarchy)
             allowNoEntry: false, // Lookback can't query _ItemHierarchy by a null ancestor
-            whiteListFields: ['Milestones', 'Tags', 'c_EnterpriseApprovalEA'],
+            whiteListFields: ['Milestones', 'Tags', 'c_EnterpriseApprovalEA', 'c_EAEpic'],
             settingsConfig: {
                 labelWidth: 100,
                 minWidth: 200,
