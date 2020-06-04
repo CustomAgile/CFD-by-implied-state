@@ -5,13 +5,14 @@ Ext.define("TSCFDByImpliedState", {
     defaults: {
         margin: 10
     },
-
+    integrationHeaders: {
+        name: "TSCFDByImpliedState"
+    },
     config: {
         defaultSettings: {
             metric_field: "Count",
         }
     },
-
     items: [{
         id: Utils.AncestorPiAppFilter.RENDER_AREA_ID,
         xtype: 'container',
@@ -31,22 +32,21 @@ Ext.define("TSCFDByImpliedState", {
         }
     }, {
         xtype: 'container',
-        itemId: 'display_box'
+        itemId: 'display_box',
+        flex: 1,
+        type: 'vbox',
+        align: 'stretch'
     }],
-
-    integrationHeaders: {
-        name: "TSCFDByImpliedState"
-    },
 
     launch: function () {
         Rally.data.wsapi.Proxy.superclass.timeout = 240000;
-
+        this.down('#display_box').on('resize', this.onChartResize, this);
         this.ancestorFilterPlugin = Ext.create('Utils.AncestorPiAppFilter', {
             ptype: 'UtilsAncestorPiAppFilter',
             pluginId: 'ancestorFilterPlugin',
-            // Set to false to prevent the '-- None --' selection option if your app can't support
-            // querying by a null ancestor (e.g. Lookback _ItemHierarchy)
-            allowNoEntry: false, // Lookback can't query _ItemHierarchy by a null ancestor
+            allowNoEntry: false,
+            overrideGlobalWhitelist: true,
+            projectScope: 'current',
             whiteListFields: ['Milestones', 'Tags', 'c_EnterpriseApprovalEA', 'c_EAEpic', 'DisplayColor'],
             settingsConfig: {
                 labelWidth: 100,
@@ -85,22 +85,14 @@ Ext.define("TSCFDByImpliedState", {
 
     _makeChart: async function () {
         var me = this;
-        if (me.loadingChart) {
-            return;
-        }
-        me.loadingChart = true;
-        me.loadingFailed = false;
+        let status = this.cancelPreviousLoad();
         var container = this.down('#display_box');
         container.removeAll();
 
-        this.setLoading("Loading Filters...");
-
-        var project = this.getContext().getProject().ObjectID;
         var type_path = this.getSetting('type_path');
         var value_field = this.getSetting('metric_field');
         var period_length = this.getSetting('time_period') || 1;
-
-        var title = "Implied State CFD Over Last " + period_length + " Month(s)";
+        var title = "Implied State CFD Over Last " + period_length + " Month" + (period_length === 1 ? "" : "s") + " (" + value_field + ")";
         var start_date = Rally.util.DateTime.add(new Date(), 'month', -1 * period_length);
 
         var filters = new Rally.data.lookback.QueryFilter.and([
@@ -114,17 +106,17 @@ Ext.define("TSCFDByImpliedState", {
         filters = filters.and(dateFilters);
 
         if (!this.searchAllProjects()) {
+            this.setLoading("Loading Projects...");
+            let projectIds = await this._getScopedProjectList();
             var projectFilter = new Rally.data.lookback.QueryFilter({
-                property: '_ProjectHierarchy',
-                value: project
+                property: 'Project',
+                operator: 'in',
+                value: projectIds
             });
             filters = filters.and(projectFilter);
         }
 
-        var milestoneFilter = this.getMilestoneFilter();
-        if (milestoneFilter) {
-            filters = filters.and(milestoneFilter);
-        }
+        this.setLoading("Loading Filters...");
 
         var ancestorFilter = this.ancestorFilterPlugin.getAncestorFilterForType(type_path);
         if (ancestorFilter) {
@@ -138,67 +130,33 @@ Ext.define("TSCFDByImpliedState", {
             filters = filters.and(ancestorLookbackFilter);
         }
 
-        if (this.ancestorFilterPlugin._hasFilters()) {
-            var multiLevelFilters = await this.ancestorFilterPlugin.getAllFiltersForType(type_path, true).catch((e) => {
-                Rally.ui.notify.Notifier.showError({ message: (e.message || e) });
-                me.loadingFailed = true;
-                this.setLoading(false);
-            });
+        let multiLevelFilters = await this.ancestorFilterPlugin.getAllFiltersForType(type_path, true).catch((e) => {
+            this.showError(e, 'Error while loading multi-level filters');
+            this.setLoading(false);
+        });
 
-            if (me.loadingFailed) { return; }
+        if (status.cancelLoad || !multiLevelFilters) {
+            return;
+        }
 
-            var dataContext = this.getContext().getDataContext();
-            if (this.searchAllProjects()) {
-                dataContext.project = null;
-            }
-
-            this.setLoading("Gathering Data...");
-
-            try {
-                var records = await Ext.create('Rally.data.wsapi.Store', {
-                    model: type_path,
-                    autoLoad: false,
-                    context: dataContext,
-                    limit: Infinity,
-                    fetch: ['ObjectID'],
-                    filters: multiLevelFilters,
-                    enablePostGet: true
-                }).load();
-
-                var ids = [0];
-                if (records && records.length) {
-                    ids = _.map(records, function (record) {
-                        return record.get('ObjectID');
-                    });
+        var timeboxFilter = await this.getTimeboxFilter(type_path);
+        if (timeboxFilter) {
+            if (this.getContext().getTimeboxScope().getType() === 'release') {
+                // If searching across the workspace, we need to filter after getting snapshots because 
+                // filtering by release with lookback API requires having all of the release IDs
+                if (this.searchAllProjects()) {
+                    multiLevelFilters.push(timeboxFilter);
                 }
-
-                var itemsFilter = new Rally.data.lookback.QueryFilter({
-                    property: 'ObjectID',
-                    operator: 'in',
-                    value: ids
-                });
-                filters = filters.and(itemsFilter);
+                else {
+                    filters = filters.and(timeboxFilter);
+                }
             }
-            catch (e) {
-                Rally.ui.notify.Notifier.showError({ message: 'Failed while fetching records for multi-level filter. Request most likely timed out.' });
-                me.setLoading(false);
-                me.loadingChart = false;
-                return;
+            else {
+                filters = filters.and(timeboxFilter);
             }
         }
 
-        var date_change_filter = Rally.data.lookback.QueryFilter.or([
-            { property: '_PreviousValues.ActualStartDate', operator: 'exists', value: true },
-            { property: '_PreviousValues.ActualEndDate', operator: 'exists', value: true },
-            { property: '_SnapshotNumber', value: 0 }
-        ]);
-
-        var border_filter = Rally.data.lookback.QueryFilter.or([
-            { property: '__At', value: Rally.util.DateTime.toIsoString(Rally.util.DateTime.add(start_date, 'day', 1)) },
-            { property: '__At', value: 'current' }
-        ]);
-
-        var change_filter = border_filter.or(date_change_filter);
+        this.setLoading("Loading Historical Data...");
 
         container.add({
             xtype: 'rallychart',
@@ -207,7 +165,10 @@ Ext.define("TSCFDByImpliedState", {
             calculatorConfig: {
                 startDate: start_date,
                 endDate: new Date(),
-                value_field: value_field
+                value_field: value_field,
+                type_path: type_path,
+                additionalFilters: multiLevelFilters,
+                status: status
             },
             storeConfig: {
                 filters: filters,
@@ -218,7 +179,6 @@ Ext.define("TSCFDByImpliedState", {
                 listeners: {
                     load: function () {
                         me.setLoading(false);
-                        me.loadingChart = false;
                     }
                 }
             },
@@ -252,6 +212,128 @@ Ext.define("TSCFDByImpliedState", {
                     }
                 }
             }
+        });
+    },
+
+    onChartResize: function () {
+        let container = this.down('#display_box');
+        let chart = this.down('rallychart');
+
+        if (container && chart) {
+            chart.setHeight(container.getHeight());
+        }
+    },
+
+    cancelPreviousLoad: function () {
+        if (this.globalStatus) {
+            this.globalStatus.cancelLoad = true;
+        }
+
+        let chart = this.down('rallychart');
+
+        if (chart && chart.calculator && chart.calculator.status) {
+            chart.calculator.status.cancelLoad = true;
+        }
+
+        let newStatus = { cancelLoad: false };
+        this.globalStatus = newStatus;
+        return newStatus;
+    },
+
+    async _getScopedProjectList() {
+        let projectStore = Ext.create('Rally.data.wsapi.Store', {
+            model: 'Project',
+            fetch: ['Name', 'ObjectID', 'Children', 'Parent'],
+            filters: [{ property: 'ObjectID', value: this.getContext().getProject().ObjectID }],
+            limit: 1,
+            pageSize: 1,
+            autoLoad: false
+        });
+
+        let results = await projectStore.load();
+        let parents = [];
+        let children = [];
+        if (results && results.length) {
+            if (this.getContext().getProjectScopeDown()) {
+                children = await this._getAllChildProjects(results);
+            }
+
+            if (this.getContext().getProjectScopeUp()) {
+                parents = await this._getAllParentProjects(results[0]);
+            }
+
+            if (children.length) {
+                results = children.concat(parents);
+            }
+            else if (parents.length) {
+                results = parents;
+            }
+
+            this.projectIds = _.map(results, (p) => {
+                return p.get('ObjectID');
+            });
+
+            this.projectRefs = _.map(results, (p) => {
+                return p.get('_ref');
+            });
+        }
+        else {
+            this.projectIds = [];
+            this.projectRefs = [];
+        }
+
+        return this.projectIds;
+    },
+
+    async _getAllChildProjects(allRoots = [], fetch = ['Name', 'Children', 'ObjectID']) {
+        if (!allRoots.length) { return []; }
+
+        const promises = allRoots.map(r => this._wrap(r.getCollection('Children', { fetch, limit: Infinity, filters: [{ property: 'State', value: 'Open' }] }).load()));
+        const children = _.flatten(await Promise.all(promises));
+        const decendents = await this._getAllChildProjects(children, fetch);
+        const removeDupes = {};
+        let finalResponse = _.flatten([...decendents, ...allRoots, ...children]);
+
+        // eslint-disable-next-line no-return-assign
+        finalResponse.forEach(s => removeDupes[s.get('_ref')] = s);
+        finalResponse = Object.values(removeDupes);
+        return finalResponse;
+    },
+
+    async _getAllParentProjects(p) {
+        let projectStore = Ext.create('Rally.data.wsapi.Store', {
+            model: 'Project',
+            fetch: ['Name', 'ObjectID', 'Parent'],
+            filters: [{ property: 'ObjectID', value: p.get('Parent').ObjectID }],
+            limit: 1,
+            pageSize: 1,
+            autoLoad: false
+        });
+
+        let results = await projectStore.load();
+        if (results && results.length) {
+            if (results[0].get('Parent')) {
+                let parents = await this._getAllParentProjects(results[0]);
+                return [p].concat(parents);
+            }
+            return [p, results[0]];
+        }
+        return [p];
+    },
+
+    async _wrap(deferred) {
+        if (!deferred || !_.isFunction(deferred.then)) {
+            return Promise.reject(new Error('Wrap cannot process this type of data into a ECMA promise'));
+        }
+        return new Promise((resolve, reject) => {
+            deferred.then({
+                success(...args) {
+                    resolve(...args);
+                },
+                failure(error) {
+                    reject(error);
+                }
+            });
         });
     },
 
@@ -368,44 +450,112 @@ Ext.define("TSCFDByImpliedState", {
         ];
     },
 
-    isMilestoneScoped: function () {
-        var result = false;
-
+    getTimeboxFilter: async function (artifactType) {
         var tbscope = this.getContext().getTimeboxScope();
-        if (tbscope && tbscope.getType() == 'milestone') {
-            result = true;
+        if (tbscope) {
+            let type = tbscope.getType();
+            if (type === 'milestone') {
+                return this.getMilestoneFilter(tbscope.getRecord());
+            }
+            else if (type === 'release' && artifactType.toLowerCase().indexOf('feature') > -1) {
+                if (this.searchAllProjects()) {
+                    return {
+                        property: 'Release.Name',
+                        value: tbscope.getRecord().get('Name')
+                    }
+                }
+                else {
+                    let filter = await this.getReleaseFilter(tbscope.getRecord());
+                    return filter;
+                }
+            }
         }
-        return result;
+        return null;
     },
 
     searchAllProjects: function () {
         return this.ancestorFilterPlugin.getIgnoreProjectScope();
     },
 
-    getMilestoneFilter: function () {
-        var result;
-        if (this.isMilestoneScoped()) {
-            var timeboxScope = this.getContext().getTimeboxScope();
-            if (timeboxScope) {
-                // timeboxScope.getQueryFilter() returns milestone refs like '/milestone/1234',
-                // as the query value, but lookback requires the object ID only.
-                var oid = null;
-                var milestone = timeboxScope.getRecord();
-                if (milestone) {
-                    oid = milestone.get('ObjectID');
-                }
-                result = new Rally.data.lookback.QueryFilter({
-                    property: 'Milestones',
-                    value: oid
+    getReleaseFilter: async function (release) {
+        try {
+            let records = await Ext.create('Rally.data.wsapi.Store', {
+                model: 'Release',
+                autoLoad: false,
+                context: this.getContext(),
+                limit: Infinity,
+                fetch: ['ObjectID'],
+                filters: [
+                    {
+                        property: 'Name',
+                        value: release.get('Name')
+                    }
+                ],
+                enablePostGet: true
+            }).load();
+
+            let ids = [0];
+            if (records && records.length) {
+                ids = _.map(records, function (record) {
+                    return record.get('ObjectID');
                 });
             }
+            return new Rally.data.lookback.QueryFilter({
+                property: 'Release',
+                operator: 'in',
+                value: ids
+            });
         }
-        return result;
+        catch (e) {
+            this.showError(e, 'Failed while fetching releases');
+        }
+        return null;
+    },
+
+    getMilestoneFilter: function (milestone) {
+        // timeboxScope.getQueryFilter() returns milestone refs like '/milestone/1234',
+        // as the query value, but lookback requires the object ID only.
+        var oid = null;
+        if (milestone) {
+            oid = milestone.get('ObjectID');
+        }
+        return new Rally.data.lookback.QueryFilter({
+            property: 'Milestones',
+            value: oid
+        });
     },
 
     onTimeboxScopeChange: function () {
         this.callParent(arguments);
         this._makeChart();
     },
+
+    showError(msg, defaultMsg) {
+        Rally.ui.notify.Notifier.showError({ message: this.parseError(msg, defaultMsg) });
+    },
+
+    parseError(e, defaultMessage) {
+        defaultMessage = defaultMessage || 'An error occurred while loading the report';
+
+        if (typeof e === 'string' && e.length) {
+            return e;
+        }
+        if (e.message && e.message.length) {
+            return e.message;
+        }
+        if (e.exception && e.error && e.error.errors && e.error.errors.length) {
+            if (e.error.errors[0].length) {
+                return e.error.errors[0];
+            } else {
+                if (e.error && e.error.response && e.error.response.status) {
+                    return `${defaultMessage} (Status ${e.error.response.status})`;
+                }
+            }
+        }
+        if (e.exceptions && e.exceptions.length && e.exceptions[0].error) {
+            return e.exceptions[0].error.statusText;
+        }
+        return defaultMessage;
+    }
 
 });

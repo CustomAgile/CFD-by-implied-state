@@ -6,78 +6,146 @@ Ext.define("Rally.TechnicalServices.ImpliedCFDCalculator", {
          * Name of field that holds the value to add up
          * (Required if type is "sum")
          */
-        value_field: null, 
+        value_field: null,
         granularity: 'day',
         /*
          * value_type: 'sum' | 'count' whether to count on given field or to count the records
          */
         value_type: 'sum',
+        type_path: undefined,
         endDate: null,
         startDate: null,
-        
-        stateDisplayNames: ['Not Started','In Progress','Done'],
-        
-        stateDisplayFunction: function(snapshot) {    
-            if ( Ext.isEmpty(snapshot.ActualStartDate) ) {
+        additionalFilters: undefined,
+        status: undefined,
+        stateDisplayNames: ['Not Started', 'In Progress', 'Done'],
+
+        stateDisplayFunction: function (snapshot) {
+            if (Ext.isEmpty(snapshot.ActualStartDate)) {
                 return this.stateDisplayNames[0];
             }
-            
-            if ( Ext.isEmpty(snapshot.ActualEndDate) ) {
+
+            if (Ext.isEmpty(snapshot.ActualEndDate)) {
                 return this.stateDisplayNames[1];
             }
-            
+
             return this.stateDisplayNames[2]
         }
     },
     constructor: function (config) {
         this.callParent(arguments);
 
-        if (this.value_field == 'Count'){
+        if (this.value_field == 'Count') {
             this.value_type = 'count';
         }
 
         if (this.value_type == 'sum' && !this.value_field) {
             throw "Cannot create Rally.TechnicalServices.ImpliedCFDCalculator by sum without value_field";
         }
-        
+
         this._prepareDates();
-        
+
     },
+
+    /*
+     *   Override to do additional filtering before drawing Chart
+     */
+    prepareChartData: async function (store) {
+        var snapshots = [];
+        var uniqueIds = {};
+        let app = Rally.getApp();
+
+        store.each(function (record) {
+            snapshots.push(record.raw);
+            uniqueIds[record.raw.ObjectID] = 1;
+        });
+
+        if (this.additionalFilters && this.additionalFilters.length) {
+            let idArray = Object.keys(uniqueIds);
+            this.additionalFilters.push({
+                property: 'ObjectID',
+                operator: 'in',
+                value: idArray
+            });
+
+            let dataContext = app.getContext().getDataContext();
+            if (app.searchAllProjects()) {
+                dataContext.project = null;
+            }
+
+            app.setLoading("Loading Additional Filters...");
+
+            try {
+                let records = await Ext.create('Rally.data.wsapi.Store', {
+                    model: this.type_path,
+                    autoLoad: false,
+                    context: dataContext,
+                    limit: Infinity,
+                    fetch: ['ObjectID'],
+                    filters: this.additionalFilters,
+                    enablePostGet: true
+                }).load();
+
+                let ids = [0];
+                if (records && records.length) {
+                    ids = _.map(records, function (record) {
+                        return record.get('ObjectID');
+                    });
+                }
+
+                snapshots = _.filter(snapshots, function (s) {
+                    return _.contains(ids, s.ObjectID);
+                });
+            }
+            catch (e) {
+                this.showError(e, 'Failed while fetching records for multi-level filter. Request most likely timed out.');
+                snapshots = [];
+                return;
+            }
+        }
+
+        if (this.status && this.status.cancelLoad) {
+            return null;
+        }
+        app.setLoading(false);
+
+        return this.runCalculation(snapshots);
+    },
+
     /*
      * The goal is to have two dates, in order, that are ISO strings
      */
-    _prepareDates: function() {
-        if ( this.startDate == "" ) { this.startDate = null; }
-        if ( this.endDate == "" )   { this.endDate   = null; }
-        
-        if ( this.startDate && typeof(this.startDate) === 'object' ) {
+    _prepareDates: function () {
+        if (this.startDate == "") { this.startDate = null; }
+        if (this.endDate == "") { this.endDate = null; }
+
+        if (this.startDate && typeof (this.startDate) === 'object') {
             this.startDate = Rally.util.DateTime.toIsoString(this.startDate);
         }
-        if ( this.endDate && typeof(this.endDate) === 'object' ) {
+        if (this.endDate && typeof (this.endDate) === 'object') {
             this.endDate = Rally.util.DateTime.toIsoString(this.endDate);
         }
-        
-        if ( this.startDate && ! /-/.test(this.startDate)  ){
+
+        if (this.startDate && ! /-/.test(this.startDate)) {
             console.log(this.startDate);
             throw "Failed to create Rally.TechnicalServices.ImpliedCFDCalculator: startDate must be a javascript date or ISO date string";
         }
 
-        if ( this.endDate && ! /-/.test(this.endDate)  ){
+        if (this.endDate && ! /-/.test(this.endDate)) {
             console.log(this.endDate);
             throw "Failed to create Rally.TechnicalServices.ImpliedCFDCalculator: endDate must be a javascript date or ISO date string";
         }
-    
+
         // switch dates
-        if ( this.startDate && this.endDate ) {
-            if ( this.startDate > this.endDate ) {
+        if (this.startDate && this.endDate) {
+            if (this.startDate > this.endDate) {
                 var holder = this.startDate;
                 this.startDate = this.endDate;
                 this.endDate = holder;
             }
         }
-        
-        if ( this.startDate ) { this.startDate = this.startDate.replace(/T.*$/,""); }
-        if ( this.endDate ) { this.endDate = this.endDate.replace(/T.*$/,""); }
+
+        if (this.startDate) { this.startDate = this.startDate.replace(/T.*$/, ""); }
+        if (this.endDate) { this.endDate = this.endDate.replace(/T.*$/, ""); }
     },
     /*
      * How to measure
@@ -91,34 +159,34 @@ Ext.define("Rally.TechnicalServices.ImpliedCFDCalculator", {
      *      filterValues: (when f=filteredSum) used to decide which values of filterField to show
      */
     getMetrics: function () {
-        
+
         var metric = {
             f: 'groupBySum',
-            field: this.value_field, 
-            groupByField: '__ImpliedState', 
+            field: this.value_field,
+            groupByField: '__ImpliedState',
             allowedValues: this.stateDisplayNames,
-            display:'area'
+            display: 'area'
         };
-                
-        if ( this.value_type == "count" ) {
+
+        if (this.value_type == "count") {
             metric.f = 'groupByCount';
         }
-        
-        return [ metric ];
+
+        return [metric];
     },
-    
-    getDerivedFieldsOnInput: function() {
+
+    getDerivedFieldsOnInput: function () {
         var me = this;
         return [
-            { 
+            {
                 as: '__ImpliedState',
-                f : function(snapshot) {
+                f: function (snapshot) {
                     return me.stateDisplayFunction(snapshot);
                 }
             }
         ];
     },
-    
+
     /*
      * Modified to allow groupBySum/groupByCount to spit out stacked area configs
      */
@@ -129,10 +197,10 @@ Ext.define("Rally.TechnicalServices.ImpliedCFDCalculator", {
 
         for (var i = 0, ilength = metrics.length; i < ilength; i += 1) {
             var metric = metrics[i];
-            if ( metric.f == "groupBySum" || metric.f == "groupByCount") {
-                var type = metric.f.replace(/groupBy/,"");
-                
-                Ext.Array.each(metric.allowedValues,function(allowed_value){
+            if (metric.f == "groupBySum" || metric.f == "groupByCount") {
+                var type = metric.f.replace(/groupBy/, "");
+
+                Ext.Array.each(metric.allowedValues, function (allowed_value) {
                     aggregationConfig.push({
                         f: type,
                         name: allowed_value,
@@ -166,64 +234,64 @@ Ext.define("Rally.TechnicalServices.ImpliedCFDCalculator", {
      * snapshot will actually say null
      * 
      */
-    _convertNullToBlank:function(snapshots){
+    _convertNullToBlank: function (snapshots) {
         var number_of_snapshots = snapshots.length;
-        for ( var i=0;i<number_of_snapshots;i++ ) {
-            if ( snapshots[i][this.group_by_field] === null ) {
+        for (var i = 0; i < number_of_snapshots; i++) {
+            if (snapshots[i][this.group_by_field] === null) {
                 snapshots[i][this.group_by_field] = "";
             }
         }
         return snapshots;
     },
-//    _getAllowedSnapshots:function(snapshots){
-//        var allowed_snapshots = [];
-//        var allowed_oids = this.allowed_oids;
-//        
-//        if ( allowed_oids.length === 0 ) {
-//            return [];
-//        }
-//        var number_of_snapshots = snapshots.length;
-//        for ( var i=0;i<number_of_snapshots;i++ ) {
-//            if (Ext.Array.contains(allowed_oids,snapshots[i].ObjectID)) {
-//                allowed_snapshots.push(snapshots[i]);
-//            }
-//        }
-//        return allowed_snapshots;
-//    },
+    //    _getAllowedSnapshots:function(snapshots){
+    //        var allowed_snapshots = [];
+    //        var allowed_oids = this.allowed_oids;
+    //        
+    //        if ( allowed_oids.length === 0 ) {
+    //            return [];
+    //        }
+    //        var number_of_snapshots = snapshots.length;
+    //        for ( var i=0;i<number_of_snapshots;i++ ) {
+    //            if (Ext.Array.contains(allowed_oids,snapshots[i].ObjectID)) {
+    //                allowed_snapshots.push(snapshots[i]);
+    //            }
+    //        }
+    //        return allowed_snapshots;
+    //    },
     // override runCalculation to change false to "false" because highcharts doesn't like it
     runCalculation: function (snapshots) {
         var calculatorConfig = this._prepareCalculatorConfig(),
             seriesConfig = this._buildSeriesConfig(calculatorConfig);
 
         var calculator = this.prepareCalculator(calculatorConfig);
-        
+
         var clean_snapshots = this._convertNullToBlank(snapshots);
-        
-//        if (this.allowed_oids !== null) {
-//            clean_snapshots = this._getAllowedSnapshots(clean_snapshots);
-//        }
-        if ( clean_snapshots.length > 0 ) {
+
+        //        if (this.allowed_oids !== null) {
+        //            clean_snapshots = this._getAllowedSnapshots(clean_snapshots);
+        //        }
+        if (clean_snapshots.length > 0) {
             calculator.addSnapshots(clean_snapshots, this._getStartDate(clean_snapshots), this._getEndDate(clean_snapshots));
         }
         var chart_data = this._transformLumenizeDataToHighchartsSeries(calculator, seriesConfig);
-        
+
         // check for false
-        Ext.Array.each(chart_data.series,function(series){
-            if ( series.name === "" ) {
+        Ext.Array.each(chart_data.series, function (series) {
+            if (series.name === "") {
                 series.name = "None";
             }
-            
+
             if (series.name === false) {
                 series.name = "False";
             }
-            
+
             if (series.name == true) {
                 series.name = "True";
             }
         });
-        
+
         return chart_data;
     }
-        
-        
+
+
 });
