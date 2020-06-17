@@ -3,7 +3,7 @@ Ext.define("TSCFDByImpliedState", {
     componentCls: 'app',
     logger: new Rally.technicalservices.Logger(),
     defaults: {
-        margin: 10
+        margin: 3
     },
     integrationHeaders: {
         name: "TSCFDByImpliedState"
@@ -20,7 +20,7 @@ Ext.define("TSCFDByImpliedState", {
         layout: {
             type: 'hbox',
             align: 'middle',
-            defaultMargins: '0 10 10 0',
+            defaultMargins: '0 10 3 0',
         }
     }, {
         id: Utils.AncestorPiAppFilter.PANEL_RENDER_AREA_ID,
@@ -28,7 +28,7 @@ Ext.define("TSCFDByImpliedState", {
         layout: {
             type: 'hbox',
             align: 'middle',
-            defaultMargins: '0 10 10 0',
+            defaultMargins: '0 10 5 0',
         }
     }, {
         xtype: 'container',
@@ -45,15 +45,12 @@ Ext.define("TSCFDByImpliedState", {
             ptype: 'UtilsAncestorPiAppFilter',
             pluginId: 'ancestorFilterPlugin',
             allowNoEntry: false,
-            overrideGlobalWhitelist: true,
             projectScope: 'current',
-            whiteListFields: ['Milestones', 'Tags', 'c_EnterpriseApprovalEA', 'c_EAEpic', 'DisplayColor'],
             settingsConfig: {
                 labelWidth: 100,
                 minWidth: 200,
                 margin: 10,
             },
-            filtersHidden: false,
             listeners: {
                 scope: this,
                 ready: function (plugin) {

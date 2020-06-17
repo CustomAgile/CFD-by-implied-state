@@ -1,13 +1,13 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>CFD-by-implied-state-1.1.8</title>
+    <title>CFD-by-implied-state-1.1.9</title>
     <!--  (c) 2020 Custom Agile.  All Rights Reserved. -->
-    <!--  Build Date: Thu Jun 04 2020 14:28:48 GMT-0400 (Eastern Daylight Time) -->
+    <!--  Build Date: Wed Jun 17 2020 07:24:06 GMT-0400 (Eastern Daylight Time) -->
     <!--  Repository: https://github.com/CustomAgile/CFD-by-implied-state -->
     <script type="text/javascript">
-        var APP_BUILD_DATE = "Thu Jun 04 2020 14:28:48 GMT-0400 (Eastern Daylight Time)";
-        var CHECKSUM = 287136832725;
+        var APP_BUILD_DATE = "Wed Jun 17 2020 07:24:06 GMT-0400 (Eastern Daylight Time)";
+        var CHECKSUM = 294856627297;
     </script>
 
     <script type="text/javascript" src="/apps/2.1/sdk.js"></script>
@@ -47,6 +47,65 @@ Ext.override(Rally.ui.inlinefilter.InlineFilterPanel, {
 
     // Don't create the close buttons
     _createCloseButton: function () { }
+});
+
+Ext.override(Ext.form.field.ComboBox, {
+    select: function (r) {
+        if (r && !r.get('ObjectID') && r.get('_uuidRef') === '/allowedattributevalue/') {
+            return;
+        }
+        this.callParent(arguments);
+    }
+});
+
+Ext.override(Rally.ui.inlinefilter.QuickFilterPanel, {
+    getFilters: function () {
+        var filters = [];
+        _.each(this.fields, function (field, index) {
+            if (field.name === 'ModelType') {
+                return;
+            }
+
+            if (!Ext.isEmpty(field.lastValue) && !field.hasActiveError()) {
+
+                var lastValue = field.lastValue;
+
+                var isRefUri = Rally.util.Ref.isRefUri(lastValue);
+                var isRefOid = _.isNumber(Rally.util.Ref.getOidFromRef(lastValue));
+                if (isRefUri && isRefOid && field.valueField === '_ref' && field.noEntryValue !== lastValue) {
+                    var record = field.getRecord();
+                    if (record) {
+                        var uuidRef = record.get('_uuidRef');
+                        if (uuidRef) {
+                            lastValue = uuidRef;
+                        }
+                    }
+                }
+
+                var filter = _.isFunction(field.getFilter) ? field.getFilter() : Rally.data.wsapi.Filter.fromExtFilter({
+                    property: field.name,
+                    operator: field.operator,
+                    value: lastValue
+                });
+
+                if (filter && filter.value !== '/allowedattributevalue/') {
+
+                    if (field.allowNoEntry && field.noEntryValue === lastValue) {
+                        filter.value = null;
+                    }
+
+                    Ext.apply(filter, {
+                        name: field.name,
+                        rawValue: lastValue,
+                        filterIndex: index + 1
+                    });
+
+                    filters.push(filter);
+                }
+            }
+        }, this);
+        return filters;
+    }
 });
 Ext.define('CustomAgile.multilevelfilter.ToggleButton', {
     extend: 'Rally.ui.Button',
@@ -389,7 +448,7 @@ Ext.define('CustomAgile.ui.tutorial.MultiLevelFilterTutorial', {
 });
 Ext.define('Utils.AncestorPiAppFilter', {
     alias: 'plugin.UtilsAncestorPiAppFilter',
-    version: "1.3.1",
+    version: "1.3.3",
     mixins: [
         'Ext.AbstractPlugin',
         'Rally.Messageable'
@@ -464,7 +523,7 @@ Ext.define('Utils.AncestorPiAppFilter', {
          * Whitelist array for inline filters. Used if app fails to retrieve global
          * whitelist or overrideGlobalWhitelist is set to true
          */
-        whiteListFields: ['Tags', 'Milestones', 'c_EAEpic', 'DisplayColor'],
+        whiteListFields: ['Tags', 'Milestones', 'c_EAEpic', 'c_EnterpriseApprovalEA', 'DisplayColor'],
 
         /**
          * @cfg {Boolean}
@@ -1653,7 +1712,7 @@ Ext.define('Utils.AncestorPiAppFilter', {
                 hidden: this._isSubscriber() || !this._showMultiLevelFilter(),
                 handler: (...args) => this.onHelpClicked(...args)
             });
-            this.filterHelpBtn.showBy(this.renderArea, 'tr-tr', [0, 7]);
+            this.filterHelpBtn.showBy(this.renderArea, 'tr-tr', [-4, 5]);
         }
 
         this._addTooltips();
@@ -2922,7 +2981,7 @@ Ext.define("TSCFDByImpliedState", {
     componentCls: 'app',
     logger: new Rally.technicalservices.Logger(),
     defaults: {
-        margin: 10
+        margin: 3
     },
     integrationHeaders: {
         name: "TSCFDByImpliedState"
@@ -2939,7 +2998,7 @@ Ext.define("TSCFDByImpliedState", {
         layout: {
             type: 'hbox',
             align: 'middle',
-            defaultMargins: '0 10 10 0',
+            defaultMargins: '0 10 3 0',
         }
     }, {
         id: Utils.AncestorPiAppFilter.PANEL_RENDER_AREA_ID,
@@ -2947,7 +3006,7 @@ Ext.define("TSCFDByImpliedState", {
         layout: {
             type: 'hbox',
             align: 'middle',
-            defaultMargins: '0 10 10 0',
+            defaultMargins: '0 10 5 0',
         }
     }, {
         xtype: 'container',
@@ -2964,15 +3023,12 @@ Ext.define("TSCFDByImpliedState", {
             ptype: 'UtilsAncestorPiAppFilter',
             pluginId: 'ancestorFilterPlugin',
             allowNoEntry: false,
-            overrideGlobalWhitelist: true,
             projectScope: 'current',
-            whiteListFields: ['Milestones', 'Tags', 'c_EnterpriseApprovalEA', 'c_EAEpic', 'DisplayColor'],
             settingsConfig: {
                 labelWidth: 100,
                 minWidth: 200,
                 margin: 10,
             },
-            filtersHidden: false,
             listeners: {
                 scope: this,
                 ready: function (plugin) {
